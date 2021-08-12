@@ -1,4 +1,4 @@
-module Blocks exposing (Matrix, remove, select)
+module Blocks exposing (Matrix, remove, select, hasAnyCluster)
 
 import List
 import Set exposing (Set)
@@ -103,3 +103,24 @@ remove selected =
                                 Just cell
                         )
             )
+
+
+hasAnyCluster : Matrix a -> Bool
+hasAnyCluster m =
+    List.any (hasEqPair << windows) m
+        || List.any (hasEqPair << zip) (windows m)
+
+
+hasEqPair : List ( a, a ) -> Bool
+hasEqPair =
+    List.any (\( a, b ) -> a == b)
+
+
+windows : List a -> List ( a, a )
+windows l =
+    zip ( l, List.drop 1 l )
+
+
+zip : ( List a, List b ) -> List ( a, b )
+zip ( a, b ) =
+    List.map2 Tuple.pair a b
