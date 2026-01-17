@@ -1,23 +1,24 @@
-module Main exposing (main)
+module Main exposing (Cell(..), Msg, blocks, hearts, main, viewCell)
 
 import Blocks exposing (Matrix)
 import Browser
 import Collage as C exposing (Collage)
 import Collage.Events as E
 import Collage.Layout as L
-import Collage.Render exposing (svgBox)
+import Collage.Render exposing (svgExplicit)
 import Collage.Text as T
 import Color exposing (Color)
 import Html exposing (Html)
+import Html.Attributes as HA
 import List
 import Random exposing (Generator)
 import Set exposing (Set)
 
 
 type Cell
-    = R
-    | G
-    | B
+    = C1
+    | C2
+    | C3
 
 
 type Msg
@@ -33,7 +34,13 @@ type alias Field =
     }
 
 
-type Model
+type alias Model =
+    { state : State
+    , theme : Theme Msg
+    }
+
+
+type State
     = Generating
     | InProgress
         { field : Field
@@ -43,6 +50,12 @@ type Model
         { field : Field
         , score : Int
         }
+
+
+type alias Theme a =
+    { cell : Maybe Cell -> Float -> Collage a
+    , mark : Float -> Collage a
+    }
 
 
 main =
@@ -56,38 +69,49 @@ main =
 
 init : ( Model, Cmd Msg )
 init =
-    ( Generating, newGame 20 20 )
+    ( { state = Generating
+      , theme = hearts
+      }
+    , newGame 20 20
+    )
 
 
 newGame : Int -> Int -> Cmd Msg
 newGame w h =
-    Random.generate NewGame (fieldG w h)
+    Random.generate NewGame <| fieldG w h
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         NewGame field ->
-            ( InProgress
-                { field = field
-                , selection = Set.empty
-                }
+            ( { model
+                | state =
+                    InProgress
+                        { field = field
+                        , selection = Set.empty
+                        }
+              }
             , Cmd.none
             )
 
         JustClick ->
-            case model of
+            case model.state of
                 Generating ->
-                    ( Generating, Cmd.none )
+                    ( model, Cmd.none )
 
                 GameIsOver { field } ->
-                    ( Generating, newGame field.width field.height )
+                    ( { model | state = Generating }
+                    , newGame field.width field.height
+                    )
 
                 InProgress m ->
-                    ( InProgress { m | selection = Set.empty }, Cmd.none )
+                    ( { model | state = InProgress { m | selection = Set.empty } }
+                    , Cmd.none
+                    )
 
         ClickAt pos ->
-            case model of
+            case model.state of
                 InProgress ({ field } as m) ->
                     ( if Set.member pos m.selection then
                         if Set.size m.selection >= 2 then
@@ -98,27 +122,33 @@ update msg model =
                                 newField =
                                     { field | blocks = new }
                             in
-                            if Blocks.hasAnyCluster new then
-                                InProgress
-                                    { m
-                                        | field = newField
-                                        , selection = Set.empty
-                                    }
+                            { model
+                                | state =
+                                    if Blocks.hasAnyCluster new then
+                                        InProgress
+                                            { m
+                                                | field = newField
+                                                , selection = Set.empty
+                                            }
 
-                            else
-                                GameIsOver
-                                    { field = newField
-                                    , score = scoreFor newField
-                                    }
+                                    else
+                                        GameIsOver
+                                            { field = newField
+                                            , score = scoreFor newField
+                                            }
+                            }
 
                         else
                             model
 
                       else
-                        InProgress
-                            { m
-                                | selection = Blocks.select pos m.field.blocks
-                            }
+                        { model
+                            | state =
+                                InProgress
+                                    { m
+                                        | selection = Blocks.select pos m.field.blocks
+                                    }
+                        }
                     , Cmd.none
                     )
 
@@ -133,13 +163,31 @@ scoreFor f =
 
 view : Model -> Html Msg
 view model =
-    svgBox ( 800, 800 ) <|
-        case model of
+    Html.div
+        [ HA.style "text-align" "center"
+        ]
+        [ Html.h1 []
+            [ Html.strong [] [ Html.text "SameGame" ]
+            , Html.em []
+                [ Html.text " by "
+                , Html.a [ HA.href "https://astynax.me" ]
+                    [ Html.text "astynax" ]
+                ]
+            ]
+        , Html.div [] [ viewGame model ]
+        ]
+
+
+viewGame : Model -> Html Msg
+viewGame model =
+    wrapSvg <|
+        case model.state of
             Generating ->
                 L.empty
 
             InProgress { field, selection } ->
                 viewField
+                    model.theme
                     selection
                     field.width
                     field.height
@@ -154,10 +202,24 @@ view model =
                     )
                 <|
                     viewField
+                        model.theme
                         Set.empty
                         field.width
                         field.height
                         field.blocks
+
+
+wrapSvg : Collage a -> Html a
+wrapSvg =
+    svgExplicit
+        [ HA.width 800
+        , HA.height 800
+        , HA.attribute "version" "1.1"
+        , HA.style "user-select" "none"
+        , HA.style "-webkit-user-select" "none"
+        , HA.style "cursor" "crosshair"
+        ]
+        << C.shift ( 400, -400 )
 
 
 viewScore : Int -> Collage a
@@ -182,38 +244,29 @@ restartButton =
         |> E.onMouseDown (always JustClick)
 
 
-viewField : Set ( Int, Int ) -> Int -> Int -> Matrix Cell -> Collage Msg
-viewField s w h =
+viewField : Theme Msg -> Set ( Int, Int ) -> Int -> Int -> Matrix Cell -> Collage Msg
+viewField t s w h =
     L.center
         << L.horizontal
-        << List.indexedMap (viewCol s h)
+        << List.indexedMap (viewCol t s h)
         << padUpTo w
 
 
-viewCol : Set ( Int, Int ) -> Int -> Int -> Maybe (List Cell) -> Collage Msg
-viewCol s h x =
+viewCol : Theme Msg -> Set ( Int, Int ) -> Int -> Int -> Maybe (List Cell) -> Collage Msg
+viewCol t s h x =
     L.vertical
         << List.reverse
-        << List.indexedMap (viewCell s x)
+        << List.indexedMap (viewCell t s x)
         << padUpTo h
         << Maybe.withDefault []
 
 
-viewCell : Set ( Int, Int ) -> Int -> Int -> Maybe Cell -> Collage Msg
-viewCell s x y mbCell =
+viewCell : Theme Msg -> Set ( Int, Int ) -> Int -> Int -> Maybe Cell -> Collage Msg
+viewCell theme s x y mbCell =
     let
-        block =
-            C.filled
-                (C.uniform <|
-                    Maybe.withDefault Color.white <|
-                        Maybe.map toColor mbCell
-                )
-            <|
-                C.square 40
-
         dot =
             if Set.member ( x, y ) s then
-                C.filled (C.uniform Color.white) (C.circle 10)
+                theme.mark 40
 
             else
                 L.empty
@@ -226,20 +279,84 @@ viewCell s x y mbCell =
                 _ ->
                     JustClick
     in
-    E.onMouseDown (always msg) <| L.impose dot block
+    E.onMouseDown (always msg) <| L.impose dot <| theme.cell mbCell 40
 
 
-toColor : Cell -> Color
-toColor cell =
-    case cell of
-        R ->
-            Color.red
+blocks : Theme a
+blocks =
+    let
+        toColor cell =
+            case cell of
+                C1 ->
+                    Color.red
 
-        G ->
-            Color.green
+                C2 ->
+                    Color.green
 
-        B ->
-            Color.blue
+                C3 ->
+                    Color.blue
+    in
+    { cell = block << Maybe.map toColor
+    , mark = C.filled (C.uniform Color.white) << C.circle << mul 0.25
+    }
+
+
+hearts : Theme a
+hearts =
+    let
+        toColor cell =
+            case cell of
+                C1 ->
+                    Color.rgb 1.0 0.0 0.8
+
+                C2 ->
+                    Color.rgb 0.0 0.8 0.8
+
+                C3 ->
+                    Color.rgb 0.6 0.0 0.8
+    in
+    { cell = heart << Maybe.map toColor
+    , mark = heartShape Color.white << mul 0.5
+    }
+
+
+block : Maybe Color -> Float -> Collage a
+block mbColor size =
+    C.filled
+        (C.uniform <|
+            Maybe.withDefault Color.black mbColor
+        )
+    <|
+        C.square size
+
+
+heart : Maybe Color -> Float -> Collage a
+heart mbColor size =
+    let
+        bg =
+            C.filled (C.uniform Color.black) <| C.square size
+    in
+    case mbColor of
+        Just c ->
+            L.impose (heartShape c size) bg
+
+        Nothing ->
+            bg
+
+
+heartShape : Color -> Float -> Collage a
+heartShape c s =
+    let
+        circle =
+            C.filled (C.uniform c) <| C.circle (s / 4)
+
+        square =
+            C.rotate (degrees 45) <| C.filled (C.uniform c) <| C.square (s * 0.4)
+    in
+    L.stack
+        [ C.shift ( -s / 4, s / 5 ) <| L.horizontal [ circle, circle ]
+        , C.shiftY (-s / 20) square
+        ]
 
 
 fieldG : Int -> Int -> Generator Field
@@ -254,7 +371,7 @@ fieldG w h =
     <|
         Random.list w <|
             Random.list h <|
-                Random.uniform R [ G, B ]
+                Random.uniform C1 [ C2, C3 ]
 
 
 padUpTo : Int -> List a -> List (Maybe a)
@@ -270,3 +387,8 @@ padUpTo n l =
             List.repeat (max 0 (n - ll)) Nothing
     in
     List.append front back
+
+
+mul : Float -> Float -> Float
+mul x y =
+    x * y
