@@ -16,7 +16,7 @@ main =
                 svgBox ( 400, 400 ) <|
                     C.scale 10 <|
                     Main.viewCell
-                        Main.hearts
+                        (Main.hearts 0.2)
                         (Set.fromList [ ( 0, 0 ) ])
                         0
                         0

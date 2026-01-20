@@ -10,9 +10,11 @@ import Collage.Text as T
 import Color exposing (Color)
 import Html exposing (Html)
 import Html.Attributes as HA
+import Html.Events as HE
 import List
 import Random exposing (Generator)
 import Set exposing (Set)
+import String
 
 
 type Cell
@@ -25,6 +27,9 @@ type Msg
     = ClickAt ( Int, Int )
     | JustClick
     | NewGame Field
+    | NewThemeBase Float
+    | NextTheme
+    | ChangeThemeBase
 
 
 type alias Field =
@@ -37,6 +42,10 @@ type alias Field =
 type alias Model =
     { state : State
     , theme : Theme Msg
+    , themeName : ThemeName
+    , themeBase : Float
+    , moves : List Int
+    , score : Int
     }
 
 
@@ -58,6 +67,11 @@ type alias Theme a =
     }
 
 
+type ThemeName
+    = Blocks
+    | Hearts
+
+
 main =
     Browser.element
         { init = \() -> init
@@ -69,8 +83,19 @@ main =
 
 init : ( Model, Cmd Msg )
 init =
+    let
+        base =
+            0.2
+
+        mkTheme =
+            themeByName Hearts
+    in
     ( { state = Generating
-      , theme = hearts
+      , theme = mkTheme base
+      , themeName = Hearts
+      , themeBase = base
+      , moves = []
+      , score = 0
       }
     , newGame 20 20
     )
@@ -81,9 +106,37 @@ newGame w h =
     Random.generate NewGame <| fieldG w h
 
 
+newThemeBase : Cmd Msg
+newThemeBase =
+    Random.generate NewThemeBase <| Random.float 0 0.333
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        ChangeThemeBase ->
+            ( model, newThemeBase )
+
+        NextTheme ->
+            let
+                tn =
+                    nextThemeName model.themeName
+            in
+            ( { model
+                | themeName = tn
+                , theme = themeByName tn model.themeBase
+              }
+            , Cmd.none
+            )
+
+        NewThemeBase base ->
+            ( { model
+                | theme = themeByName model.themeName base
+                , themeBase = base
+              }
+            , Cmd.none
+            )
+
         NewGame field ->
             ( { model
                 | state =
@@ -91,6 +144,8 @@ update msg model =
                         { field = field
                         , selection = Set.empty
                         }
+                , moves = []
+                , score = 0
               }
             , Cmd.none
             )
@@ -134,8 +189,15 @@ update msg model =
                                     else
                                         GameIsOver
                                             { field = newField
-                                            , score = scoreFor newField
+                                            , score = model.score
                                             }
+                                , moves = Set.size m.selection :: model.moves
+                                , score =
+                                    let
+                                        x =
+                                            Set.size m.selection
+                                    in
+                                    model.score + x * x
                             }
 
                         else
@@ -156,9 +218,24 @@ update msg model =
                     ( model, Cmd.none )
 
 
-scoreFor : Field -> Int
-scoreFor f =
-    f.width * f.height - List.sum (List.map List.length f.blocks)
+nextThemeName : ThemeName -> ThemeName
+nextThemeName name =
+    case name of
+        Blocks ->
+            Hearts
+
+        Hearts ->
+            Blocks
+
+
+themeByName : ThemeName -> (Float -> Theme Msg)
+themeByName name =
+    case name of
+        Blocks ->
+            blocks
+
+        Hearts ->
+            hearts
 
 
 view : Model -> Html Msg
@@ -174,7 +251,23 @@ view model =
                     [ Html.text "astynax" ]
                 ]
             ]
+        , Html.button
+            [ HE.onClick NextTheme
+            , HA.title "Change shape of pieces"
+            ]
+            [ Html.text "🧩" ]
+        , Html.button
+            [ HE.onClick ChangeThemeBase
+            , HA.title "Change colors"
+            ]
+            [ Html.text "🎨" ]
+        , Html.span [ HA.style "margin-left" "5px" ] [ Html.text <| String.append "Score: " <| String.fromInt model.score ]
         , Html.div [] [ viewGame model ]
+        , Html.pre []
+            [ Html.text <|
+                String.join " " <|
+                    List.map String.fromInt model.moves
+            ]
         ]
 
 
@@ -282,42 +375,40 @@ viewCell theme s x y mbCell =
     E.onMouseDown (always msg) <| L.impose dot <| theme.cell mbCell 40
 
 
-blocks : Theme a
-blocks =
-    let
-        toColor cell =
-            case cell of
-                C1 ->
-                    Color.red
-
-                C2 ->
-                    Color.green
-
-                C3 ->
-                    Color.blue
-    in
-    { cell = block << Maybe.map toColor
+blocks : Float -> Theme a
+blocks base =
+    { cell = block << Maybe.map (makeColor base)
     , mark = C.filled (C.uniform Color.white) << C.circle << mul 0.25
     }
 
 
-hearts : Theme a
-hearts =
-    let
-        toColor cell =
-            case cell of
-                C1 ->
-                    Color.rgb 1.0 0.0 0.8
-
-                C2 ->
-                    Color.rgb 0.0 0.8 0.8
-
-                C3 ->
-                    Color.rgb 0.6 0.0 0.8
-    in
-    { cell = heart << Maybe.map toColor
-    , mark = heartShape Color.white << mul 0.5
+hearts : Float -> Theme a
+hearts base =
+    { cell = heart << Maybe.map (makeColor base)
+    , mark =
+        \s ->
+            L.stack
+                [ heartShape Color.white (s * 0.4)
+                , heartShape Color.black (s * 0.5)
+                ]
     }
+
+
+makeColor : Float -> Cell -> Color
+makeColor base cell =
+    let
+        mk h =
+            Color.hsl h 0.8 0.6
+    in
+    case cell of
+        C1 ->
+            mk base
+
+        C2 ->
+            mk (base + 0.333)
+
+        C3 ->
+            mk (base + 0.333 + 0.333)
 
 
 block : Maybe Color -> Float -> Collage a
@@ -347,7 +438,8 @@ heart mbColor size =
 heartShape : Color -> Float -> Collage a
 heartShape c s =
     let
-        x = 0.27 * s
+        x =
+            0.27 * s
 
         circle =
             C.filled (C.uniform c) <| C.circle x
@@ -355,12 +447,12 @@ heartShape c s =
         square =
             C.filled (C.uniform c) <| C.square (x * 2)
     in
-        C.rotate (degrees 45) <|
-            L.stack
-                [ C.shiftY x circle
-                , C.shiftX x circle
-                , square
-                ]
+    C.rotate (degrees 45) <|
+        L.stack
+            [ C.shiftY x circle
+            , C.shiftX x circle
+            , square
+            ]
 
 
 fieldG : Int -> Int -> Generator Field
