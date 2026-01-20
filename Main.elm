@@ -347,16 +347,20 @@ heart mbColor size =
 heartShape : Color -> Float -> Collage a
 heartShape c s =
     let
+        x = 0.27 * s
+
         circle =
-            C.filled (C.uniform c) <| C.circle (s / 4)
+            C.filled (C.uniform c) <| C.circle x
 
         square =
-            C.rotate (degrees 45) <| C.filled (C.uniform c) <| C.square (s * 0.4)
+            C.filled (C.uniform c) <| C.square (x * 2)
     in
-    L.stack
-        [ C.shift ( -s / 4, s / 5 ) <| L.horizontal [ circle, circle ]
-        , C.shiftY (-s / 20) square
-        ]
+        C.rotate (degrees 45) <|
+            L.stack
+                [ C.shiftY x circle
+                , C.shiftX x circle
+                , square
+                ]
 
 
 fieldG : Int -> Int -> Generator Field
